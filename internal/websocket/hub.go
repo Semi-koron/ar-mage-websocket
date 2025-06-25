@@ -7,6 +7,17 @@ import (
 )
 
 type Hub struct {
+    // Rooms map[roomID]*Room
+    rooms map[string]*Room
+
+    // Stop channel
+    stop chan struct{}
+
+    // Mutex for thread-safe operations
+    mu sync.RWMutex
+}
+
+type Room struct {
     // Registered clients.
     clients map[*Client]bool
 
@@ -19,68 +30,81 @@ type Hub struct {
     // Unregister requests from clients.
     Unregister chan *Client
 
-    // Stop channel
-    stop chan struct{}
-
     // Mutex for thread-safe operations
     mu sync.RWMutex
 }
 
 func NewHub() *Hub {
     return &Hub{
+        rooms: make(map[string]*Room),
+        stop:  make(chan struct{}),
+    }
+}
+
+func NewRoom() *Room {
+    return &Room{
         Broadcast:  make(chan []byte),
         Register:   make(chan *Client),
         Unregister: make(chan *Client),
         clients:    make(map[*Client]bool),
-        stop:       make(chan struct{}),
     }
 }
 
 func (h *Hub) Run() {
+    <-h.stop
+    h.mu.Lock()
+    for _, room := range h.rooms {
+        for client := range room.clients {
+            close(client.Send)
+        }
+    }
+    h.mu.Unlock()
+}
+
+func (r *Room) Run(hub *Hub, roomID string) {
     for {
         select {
-        case client := <-h.Register:
-            h.mu.Lock()
-            h.clients[client] = true
-            h.mu.Unlock()
+        case client := <-r.Register:
+            r.mu.Lock()
+            r.clients[client] = true
+            r.mu.Unlock()
             
-            log.Printf("Client %s connected. Total clients: %d", client.ID, len(h.clients))
+            log.Printf("Client %s connected to room %s. Total clients: %d", client.ID, client.RoomID, len(r.clients))
             
             // 接続通知を他のクライアントに送信
-            h.notifyClientJoined(client)
+            r.notifyClientJoined(client)
 
-        case client := <-h.Unregister:
-            h.mu.Lock()
-            if _, ok := h.clients[client]; ok {
-                delete(h.clients, client)
+        case client := <-r.Unregister:
+            r.mu.Lock()
+            if _, ok := r.clients[client]; ok {
+                delete(r.clients, client)
                 close(client.Send)
             }
-            h.mu.Unlock()
+            clientCount := len(r.clients)
+            r.mu.Unlock()
             
-            log.Printf("Client %s disconnected. Total clients: %d", client.ID, len(h.clients))
+            log.Printf("Client %s disconnected from room %s. Total clients: %d", client.ID, client.RoomID, clientCount)
             
             // 切断通知を他のクライアントに送信
-            h.notifyClientLeft(client)
+            r.notifyClientLeft(client)
+            
+            // ルームが空になったらHubから削除
+            if clientCount == 0 {
+                hub.removeRoom(roomID)
+                return
+            }
 
-        case message := <-h.Broadcast:
-            h.mu.RLock()
-            for client := range h.clients {
+        case message := <-r.Broadcast:
+            r.mu.RLock()
+            for client := range r.clients {
                 select {
                 case client.Send <- message:
                 default:
                     close(client.Send)
-                    delete(h.clients, client)
+                    delete(r.clients, client)
                 }
             }
-            h.mu.RUnlock()
-
-        case <-h.stop:
-            h.mu.Lock()
-            for client := range h.clients {
-                close(client.Send)
-            }
-            h.mu.Unlock()
-            return
+            r.mu.RUnlock()
         }
     }
 }
@@ -89,16 +113,51 @@ func (h *Hub) Stop() {
     close(h.stop)
 }
 
+func (h *Hub) GetRoom(roomID string) *Room {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    
+    if room, exists := h.rooms[roomID]; exists {
+        return room
+    }
+    
+    room := NewRoom()
+    h.rooms[roomID] = room
+    go room.Run(h, roomID)
+    return room
+}
+
+func (h *Hub) removeRoom(roomID string) {
+    h.mu.Lock()
+    defer h.mu.Unlock()
+    
+    delete(h.rooms, roomID)
+    log.Printf("Room %s removed (empty)", roomID)
+}
+
 func (h *Hub) GetClientCount() int {
     h.mu.RLock()
     defer h.mu.RUnlock()
-    return len(h.clients)
+    
+    total := 0
+    for _, room := range h.rooms {
+        room.mu.RLock()
+        total += len(room.clients)
+        room.mu.RUnlock()
+    }
+    return total
 }
 
-func (h *Hub) notifyClientJoined(client *Client) {
+func (r *Room) GetClientCount() int {
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+    return len(r.clients)
+}
+
+func (r *Room) notifyClientJoined(client *Client) {
     // 実装例
 }
 
-func (h *Hub) notifyClientLeft(client *Client) {
+func (r *Room) notifyClientLeft(client *Client) {
     // 実装例
 }

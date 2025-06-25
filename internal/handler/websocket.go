@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/Semikoron/ar-mage-websocket/internal/websocket"
+	"github.com/gorilla/mux"
 	ws "github.com/gorilla/websocket"
 )
 
@@ -25,15 +26,30 @@ func HandleWebSocket(hub *websocket.Hub) http.HandlerFunc {
             return
         }
 
-        clientID := generateClientID()
-        client := &websocket.Client{
-            ID:   clientID,
-            Hub:  hub,
-            Conn: conn,
-            Send: make(chan []byte, 256),
+        // Get roomID from path parameters or query string
+        vars := mux.Vars(r)
+        roomID := vars["roomID"]
+        if roomID == "" {
+            roomID = r.URL.Query().Get("room")
+        }
+        if roomID == "" {
+            roomID = "default"
         }
 
-        client.Hub.Register <- client
+        // Get room for this roomID
+        room := hub.GetRoom(roomID)
+
+        clientID := generateClientID()
+        client := &websocket.Client{
+            ID:     clientID,
+            RoomID: roomID,
+            Hub:    hub,
+            Room:   room,
+            Conn:   conn,
+            Send:   make(chan []byte, 256),
+        }
+
+        room.Register <- client
 
         go client.WritePump()
         go client.ReadPump()

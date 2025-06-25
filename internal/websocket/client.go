@@ -16,10 +16,12 @@ const (
 )
 
 type Client struct {
-	ID   string
-	Hub  *Hub
-	Conn *websocket.Conn
-	Send chan []byte
+	ID     string
+	RoomID string
+	Hub    *Hub
+	Room   *Room
+	Conn   *websocket.Conn
+	Send   chan []byte
 }
 
 type Message struct {
@@ -30,7 +32,7 @@ type Message struct {
 
 func (c *Client) ReadPump() {
 	defer func() {
-		c.Hub.Unregister <- c
+		c.Room.Unregister <- c
 		c.Conn.Close()
 	}()
 	
@@ -59,7 +61,7 @@ func (c *Client) ReadPump() {
 		msg.From = c.ID
 		
 		if processedMessage, err := json.Marshal(msg); err == nil {
-			c.Hub.Broadcast <- processedMessage
+			c.Room.Broadcast <- processedMessage
 		}
 	}
 }
