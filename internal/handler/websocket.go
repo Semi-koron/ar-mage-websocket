@@ -3,19 +3,40 @@ package handler
 import (
 	"log"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/Semikoron/ar-mage-websocket/internal/websocket"
 	"github.com/gorilla/mux"
 	ws "github.com/gorilla/websocket"
+	"github.com/joho/godotenv"
 )
 
 var upgrader = ws.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+        err := godotenv.Load(".env")
+        if err != nil {
+            log.Printf("Error loading .env file: %v", err)
+        }
+        desktopOrigin := os.Getenv("DESKTOP_ORIGIN")
+        if desktopOrigin == "" {
+            desktopOrigin = "http://localhost:5173"
+        }
+        log.Printf("Desktop origin: %s", desktopOrigin)
+        mobileOrigin := os.Getenv("MOBILE_ORIGIN")
+        if mobileOrigin == "" {
+            mobileOrigin = "http://localhost:5174"
+        }
+        log.Printf("Mobile origin: %s", mobileOrigin)
+        origin := r.Header.Get("Origin")
+        if origin == desktopOrigin || origin == mobileOrigin {
+            return true
+        }
+        log.Printf("Blocked WebSocket connection from origin: %s", origin)
+        return false
+    },
 }
 
 func HandleWebSocket(hub *websocket.Hub) http.HandlerFunc {
