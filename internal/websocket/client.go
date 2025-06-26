@@ -30,6 +30,10 @@ type Message struct {
 	From    string      `json:"from"`
 }
 
+type StageMessage struct {
+	Stage [][][]int16 `json:"stage"`
+}
+
 func (c *Client) ReadPump() {
 	defer func() {
 		c.Room.Unregister <- c
@@ -59,6 +63,20 @@ func (c *Client) ReadPump() {
 		}
 		
 		msg.From = c.ID
+		if msg.Type == "stage" {
+			var stageMsg StageMessage
+			
+			contentBytes, err := json.Marshal(msg.Content)
+			if err != nil {
+				log.Printf("error marshaling stage message content: %v", err)
+				continue
+			}
+			if err := json.Unmarshal(contentBytes, &stageMsg); err != nil {
+				log.Printf("error unmarshaling stage message: %v", err)
+				continue
+			}
+			c.Room.WriteStage(stageMsg.Stage)
+		}
 		
 		if processedMessage, err := json.Marshal(msg); err == nil {
 			c.Room.Broadcast <- processedMessage

@@ -2,6 +2,8 @@
 package websocket
 
 import (
+	"encoding/json"
+
 	"log"
 	"sync"
 )
@@ -20,6 +22,9 @@ type Hub struct {
 type Room struct {
     // Registered clients.
     clients map[*Client]bool
+
+    // Stage of the room
+    stage [][][]int16
 
     // Inbound messages from the clients.
     Broadcast chan []byte
@@ -47,6 +52,7 @@ func NewRoom() *Room {
         Register:   make(chan *Client),
         Unregister: make(chan *Client),
         clients:    make(map[*Client]bool),
+        stage:     make([][][]int16, 0),
     }
 }
 
@@ -113,6 +119,14 @@ func (h *Hub) Stop() {
     close(h.stop)
 }
 
+func (r *Room) WriteStage(stage [][][]int16) {
+    r.mu.Lock()
+    r.stage = stage
+    r.mu.Unlock()
+
+    log.Printf("Stage updated for room")
+}
+
 func (h *Hub) GetRoom(roomID string) *Room {
     h.mu.Lock()
     defer h.mu.Unlock()
@@ -155,7 +169,28 @@ func (r *Room) GetClientCount() int {
 }
 
 func (r *Room) notifyClientJoined(client *Client) {
-    // 実装例
+    // stageデータをクライアントに送信
+    var stageMsg StageMessage
+    r.mu.RLock()
+    stageMsg.Stage = r.stage
+    r.mu.RUnlock()
+    var msg Message
+    msg.Type = "stage"
+    msg.Content = stageMsg
+    msg.From = "server"
+    message, err := json.Marshal(msg)
+    if err != nil {
+        log.Printf("Error marshaling message: %v", err)
+        return
+    }
+    for client := range r.clients {
+        select {
+        case client.Send <- message:
+        default:
+            close(client.Send)
+            delete(r.clients, client)
+        }
+    }
 }
 
 func (r *Room) notifyClientLeft(client *Client) {
