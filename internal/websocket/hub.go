@@ -3,7 +3,6 @@ package websocket
 
 import (
 	"encoding/json"
-
 	"log"
 	"sync"
 )
@@ -124,7 +123,7 @@ func (r *Room) WriteStage(stage [][][]int16) {
     r.stage = stage
     r.mu.Unlock()
 
-    log.Printf("Stage updated for room")
+    log.Printf("Stage updated for room with %d layers", len(stage))
 }
 
 func (h *Hub) GetRoom(roomID string) *Room {
@@ -168,21 +167,35 @@ func (r *Room) GetClientCount() int {
     return len(r.clients)
 }
 
+// 修正：json.RawMessageに対応
 func (r *Room) notifyClientJoined(client *Client) {
-    // stageデータをクライアントに送信
-    var stageMsg StageMessage
     r.mu.RLock()
-    stageMsg.Stage = r.stage
+    stageMsg := StageMessage{Stage: r.stage}
     r.mu.RUnlock()
-    var msg Message
-    msg.Type = "stage"
-    msg.Content = stageMsg
-    msg.From = "server"
+    
+    // StageMessageをjson.RawMessageに変換
+    contentBytes, err := json.Marshal(stageMsg)
+    if err != nil {
+        log.Printf("Error marshaling stage message: %v", err)
+        return
+    }
+    
+    msg := Message{
+        Type:    "stage",
+        Content: json.RawMessage(contentBytes),
+        From:    "server",
+    }
+    
     message, err := json.Marshal(msg)
     if err != nil {
         log.Printf("Error marshaling message: %v", err)
         return
     }
+    
+    log.Printf("Sending stage data to clients in room. Stage has %d layers", len(stageMsg.Stage))
+    
+    r.mu.RLock()
+    defer r.mu.RUnlock()
     for client := range r.clients {
         select {
         case client.Send <- message:
@@ -194,5 +207,29 @@ func (r *Room) notifyClientJoined(client *Client) {
 }
 
 func (r *Room) notifyClientLeft(client *Client) {
-    // 実装例
+    // 切断通知の実装例
+    msg := Message{
+        Type:    "client_left",
+        Content: json.RawMessage(`{"client_id":"` + client.ID + `"}`),
+        From:    "server",
+    }
+    
+    message, err := json.Marshal(msg)
+    if err != nil {
+        log.Printf("Error marshaling client left message: %v", err)
+        return
+    }
+    
+    r.mu.RLock()
+    defer r.mu.RUnlock()
+    for c := range r.clients {
+        if c != client { // 切断したクライアント以外に送信
+            select {
+            case c.Send <- message:
+            default:
+                close(c.Send)
+                delete(r.clients, c)
+            }
+        }
+    }
 }

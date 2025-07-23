@@ -24,10 +24,11 @@ type Client struct {
 	Send   chan []byte
 }
 
+// 修正：interface{}をjson.RawMessageに変更
 type Message struct {
-	Type    string      `json:"type"`
-	Content interface{} `json:"content"`
-	From    string      `json:"from"`
+	Type    string          `json:"type"`
+	Content json.RawMessage `json:"content"`
+	From    string          `json:"from"`
 }
 
 type StageMessage struct {
@@ -56,6 +57,9 @@ func (c *Client) ReadPump() {
 			break
 		}
 		
+		// デバッグ：受信した生メッセージをログ出力
+		log.Printf("Received raw message: %s", string(message))
+		
 		var msg Message
 		if err := json.Unmarshal(message, &msg); err != nil {
 			log.Printf("error unmarshaling message: %v", err)
@@ -63,29 +67,29 @@ func (c *Client) ReadPump() {
 		}
 		
 		msg.From = c.ID
+		
 		if msg.Type == "stage" {
 			var stageMsg StageMessage
 			
-			contentBytes, err := json.Marshal(msg.Content)
-			if err != nil {
-				log.Printf("error marshaling stage message content: %v", err)
-				continue
-			}
-			if err := json.Unmarshal(contentBytes, &stageMsg); err != nil {
+			if err := json.Unmarshal(msg.Content, &stageMsg); err != nil {
 				log.Printf("error unmarshaling stage message: %v", err)
+				log.Printf("content was: %s", string(msg.Content))
 				continue
 			}
+			
+			log.Printf("Successfully parsed stage data with %d layers", len(stageMsg.Stage))
 			c.Room.WriteStage(stageMsg.Stage)
 		}
 		
 		if processedMessage, err := json.Marshal(msg); err == nil {
 			c.Room.Broadcast <- processedMessage
+		} else {
+			log.Printf("error marshaling processed message: %v", err)
 		}
 	}
 }
 
 func (c *Client) WritePump() {
-	// 応答を確認
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
@@ -107,6 +111,7 @@ func (c *Client) WritePump() {
 			}
 			w.Write(message)
 			
+			// 追加のメッセージがある場合の処理
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
 				w.Write([]byte{'\n'})
