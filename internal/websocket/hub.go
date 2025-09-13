@@ -169,8 +169,9 @@ func (r *Room) GetClientCount() int {
 
 // 修正：json.RawMessageに対応
 func (r *Room) notifyClientJoined(client *Client) {
+    log.Printf("notify実行")
     r.mu.RLock()
-    stageMsg := StageMessage{Stage: r.stage}
+    stageMsg := StageMessage{r.stage}
     r.mu.RUnlock()
     
     // StageMessageをjson.RawMessageに変換
